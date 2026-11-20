@@ -129,6 +129,9 @@ def _atomic_copy(blob: bytes, out_dir: str) -> str:
             os.fsync(handle.fileno())
         target = os.path.join(out_dir, OUTPUT_NAME)
         os.replace(tmp_path, target)
+        # mkstemp creates 0600 files; make the published copy readable
+        # by any user (e.g. a grader running as a different account).
+        os.chmod(target, 0o644)
     except BaseException:
         if os.path.exists(tmp_path):
             os.unlink(tmp_path)
