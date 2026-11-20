@@ -74,6 +74,16 @@ sha256sum out1/entry.png out2/entry.png entry.png
 - Also verified under `python3 -O` (checks use explicit raises, not
   asserts).
 
+## Verifikasi ulang (20 November 2026)
+
+Perubahan pada `main.py`: fungsi `publish()` kini juga memeriksa sha256 salinan yang ditulis terhadap `EXPECTED_SHA256`, sehingga salinan yang rusak tidak bisa lolos hanya karena dimensinya benar. Setelah perubahan itu `main.py` dijalankan dua kali, ditambah satu run dengan `python3 -O`:
+
+- Run 1: `MAKEFUN_OUTPUT_DIR=/tmp/run1 python3 main.py` — `entry.png` (805595 byte, 1024x1024), sha256 `a0f61f7091cc0135f478bdae5de9d28986c08eeabaf563cf07b0bda4f33ce5f7`
+- Run 2: `MAKEFUN_OUTPUT_DIR=/tmp/run2 python3 main.py` — sha256 sama persis
+- Run `python3 -O`: `MAKEFUN_OUTPUT_DIR=/tmp/runO python3 -O main.py` — sha256 sama persis
+
+Kedua run, run `-O`, dan `entry.png` yang disertakan menghasilkan hash yang sama, jadi keluarannya identik secara byte.
+
 ## Status
 
 Built and verified 20 Nov 2026 ~07:20 WIB. **NOT submitted** — build
@@ -81,12 +91,7 @@ only; the parent agent does the usage export, re-bundle and submit.
 Competition `news-image-20261120`, FREE, AI-judge pairwise, $250 pot
 shared by top 50, deadline 22 Nov 2026 00:00 UTC (07:00 WIB).
 
-**Blocker:** the public GitHub repo
-`https://github.com/Ryanefri10/news-image-20261120` does not exist yet
-— the saved PAT is scoped per-repo and cannot create repositories
-(verified: the 20261119 repo resolves, the 20261120 one 404s). Repo
-creation needs the GitHub web UI (saved login). The local repo is
-committed and ready to push once the empty public repo is created.
+**Status repo (20 November 2026):** repo publik ini sudah ada di GitHub — klon berhasil dan commit awal sudah ada di `main`. Kendala pembuatan repo pada catatan sebelumnya sudah teratasi; langkah berikutnya adalah push commit baru ke repo ini.
 
 ## License
 
