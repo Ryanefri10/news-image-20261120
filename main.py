@@ -1,103 +1,155 @@
-"""Publish the 20 November 2026 front page as this entry's image.
+"""Graded publisher for the news-image-20261120 entry (stdlib only).
 
-The finished front page ships beside this script as entry.png: a
-newspaper page for Friday 20 November 2026, built from that day's
-verified news. This script is deliberately boring — it proves the
-vendored page is exactly the page it should be, then places a
-byte-identical copy at the path the grader reads. Standard library
-only; no network, no third-party code, no drawing at run time.
+The finished front page for Friday 20 November 2026 ships in this
+repository as entry.png, composed at build time by compose.py. This
+script never draws anything: it audits the vendored file (size cap,
+pinned sha256, PNG geometry, every chunk's CRC), then publishes a
+byte-identical copy atomically to $MAKEFUN_OUTPUT_DIR/entry.png
+(default /output) and reads the copy back to prove it landed intact.
+
+Runs offline on Python 3.13 with nothing installed; deterministic, so
+the grader's two runs write the same bytes.
 """
 
 import hashlib
 import os
 import struct
 import sys
+import tempfile
+import zlib
 
-# Location of the vendored front page, next to this script.
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-VENDORED = os.path.join(BASE_DIR, "entry.png")
+# sha256 of the composed front page. Pinning it means a damaged or
+# swapped entry.png fails loudly here instead of being published, and
+# re-running compose.py with different content requires updating this
+# constant deliberately.
+EXPECTED_SHA256 = "966461b861787fd8ecea6a7254db02e08ac5136628166148897140da676abab2"
 
-# sha256 of the composed 20 November 2026 front page. The copy is
-# checked against it, so a damaged or swapped vendored file fails
-# loudly instead of entering the wrong picture. It also pins the
-# exact composed page: re-running compose.py with different stories
-# produces a different digest and this script refuses to publish it.
-EXPECTED_SHA256 = "a0f61f7091cc0135f478bdae5de9d28986c08eeabaf563cf07b0bda4f33ce5f7"
-
-MAX_FILE_BYTES = 1024 * 1024  # the competition's 1 MiB cap
-MAX_SIDE_PIXELS = 1024        # and its 1024x1024 cap
-PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+BYTE_CAP = 1 << 20          # competition limit: 1 MiB
+SIDE_CAP = 1024             # competition limit: 1024x1024 pixels
+PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
+OUTPUT_NAME = "entry.png"
 
 
-def fail(message):
-    """Abort with a clear error instead of publishing a bad image."""
-    raise SystemExit("main.py: " + message)
+class PublishError(RuntimeError):
+    """Any reason the vendored page must not be published."""
 
 
-def load_vendored_page():
+def vendored_path() -> str:
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), OUTPUT_NAME)
+
+
+def read_source() -> bytes:
     try:
-        with open(VENDORED, "rb") as handle:
+        with open(vendored_path(), "rb") as handle:
             return handle.read()
     except OSError as exc:
-        fail("cannot read vendored entry.png: %s" % exc)
+        raise PublishError(f"cannot read vendored entry.png: {exc}") from exc
 
 
-def parse_png_size(blob):
-    """Return (width, height) or abort if the bytes are not a whole PNG."""
-    if len(blob) < 24 or blob[:8] != PNG_SIGNATURE:
-        fail("vendored entry.png is not a PNG file")
+def png_geometry(blob: bytes) -> tuple[int, int]:
+    """Width and height from IHDR, which must be the first chunk."""
+    if len(blob) < 33 or not blob.startswith(PNG_MAGIC):
+        raise PublishError("entry.png does not start with a PNG signature")
     if blob[12:16] != b"IHDR":
-        fail("vendored entry.png has no IHDR chunk")
+        raise PublishError("entry.png: first chunk is not IHDR")
     width, height = struct.unpack(">II", blob[16:24])
+    if width == 0 or height == 0:
+        raise PublishError("entry.png: IHDR reports a zero dimension")
     return width, height
 
 
-def validate_page(blob):
-    """Abort unless blob is the expected 1024x1024 page under 1 MiB."""
-    if len(blob) > MAX_FILE_BYTES:
-        fail("entry.png is larger than 1 MiB (%d bytes)" % len(blob))
+def audit_chunks(blob: bytes) -> int:
+    """Walk every PNG chunk, verifying lengths and CRC32 checksums.
+
+    Returns the number of IDAT chunks. Rejects truncated chunks, bad
+    checksums, a missing IEND terminator and trailing garbage, so only
+    a structurally whole PNG can be published.
+    """
+    pos = len(PNG_MAGIC)
+    total = len(blob)
+    seen: list[bytes] = []
+    idat_count = 0
+    while pos < total:
+        if total - pos < 12:
+            raise PublishError("entry.png: truncated chunk header")
+        (length,) = struct.unpack(">I", blob[pos:pos + 4])
+        kind = blob[pos + 4:pos + 8]
+        end = pos + 12 + length
+        if end > total:
+            raise PublishError(f"entry.png: chunk {kind!r} runs past EOF")
+        stored = struct.unpack(">I", blob[end - 4:end])[0]
+        computed = zlib.crc32(blob[pos + 4:end - 4]) & 0xFFFFFFFF
+        if stored != computed:
+            raise PublishError(f"entry.png: CRC mismatch in chunk {kind!r}")
+        seen.append(kind)
+        if kind == b"IDAT":
+            idat_count += 1
+        pos = end
+    if not seen or seen[0] != b"IHDR":
+        raise PublishError("entry.png: no IHDR chunk")
+    if seen[-1] != b"IEND":
+        raise PublishError("entry.png: stream does not end with IEND")
+    if idat_count == 0:
+        raise PublishError("entry.png: no image data (IDAT) chunks")
+    return idat_count
+
+
+def validate(blob: bytes) -> tuple[int, int]:
+    """Full gate: byte cap, digest pin, pixel cap, chunk integrity."""
+    if len(blob) > BYTE_CAP:
+        raise PublishError(f"entry.png is {len(blob)} bytes, over the 1 MiB cap")
     digest = hashlib.sha256(blob).hexdigest()
     if digest != EXPECTED_SHA256:
-        fail("vendored entry.png failed its digest check")
-    width, height = parse_png_size(blob)
-    if width > MAX_SIDE_PIXELS or height > MAX_SIDE_PIXELS:
-        fail("entry.png is larger than 1024x1024 (%dx%d)" % (width, height))
+        raise PublishError(
+            f"entry.png sha256 {digest} does not match the pinned {EXPECTED_SHA256}"
+        )
+    width, height = png_geometry(blob)
+    if width > SIDE_CAP or height > SIDE_CAP:
+        raise PublishError(f"entry.png is {width}x{height}, over the 1024x1024 cap")
+    audit_chunks(blob)
     return width, height
 
 
-def publish(blob, width, height):
-    """Write blob to $MAKEFUN_OUTPUT_DIR/entry.png and verify the copy.
+def publish(blob: bytes) -> str:
+    """Atomically place blob at $MAKEFUN_OUTPUT_DIR/entry.png.
 
-    The copy must match the vendored page byte for byte *and* decode
-    to the same dimensions, so a truncated write cannot slip through.
+    Writes a sibling temp file, fsyncs it, then os.replace()s it onto
+    the target so a reader never sees a half-written image. The copy
+    is read back and must match the source byte for byte.
     """
-    out_dir = os.environ.get("MAKEFUN_OUTPUT_DIR", "/output")
+    out_dir = os.environ.get("MAKEFUN_OUTPUT_DIR") or "/output"
     try:
         os.makedirs(out_dir, exist_ok=True)
+        fd, tmp_path = tempfile.mkstemp(prefix=".entry-", suffix=".tmp", dir=out_dir)
+        try:
+            with os.fdopen(fd, "wb") as handle:
+                handle.write(blob)
+                handle.flush()
+                os.fsync(handle.fileno())
+            target = os.path.join(out_dir, OUTPUT_NAME)
+            os.replace(tmp_path, target)
+        except BaseException:
+            if os.path.exists(tmp_path):
+                os.unlink(tmp_path)
+            raise
     except OSError as exc:
-        fail("cannot create output dir %s: %s" % (out_dir, exc))
-    target = os.path.join(out_dir, "entry.png")
-    with open(target, "wb") as handle:
-        handle.write(blob)
+        raise PublishError(f"cannot write into {out_dir}: {exc}") from exc
     with open(target, "rb") as handle:
         copied = handle.read()
     if copied != blob:
-        fail("the copied entry.png does not match the vendored page")
-    if hashlib.sha256(copied).hexdigest() != EXPECTED_SHA256:
-        fail("the copied page %s does not match the expected sha256" % target)
-    copied_width, copied_height = parse_png_size(copied)
-    if (copied_width, copied_height) != (width, height):
-        fail("the copied entry.png has different dimensions (%dx%d)"
-             % (copied_width, copied_height))
+        raise PublishError("published entry.png differs from the vendored page")
     return target
 
 
-def main():
-    blob = load_vendored_page()
-    width, height = validate_page(blob)
-    target = publish(blob, width, height)
-    print("entry.png -> %s (%d bytes, %dx%d)"
-          % (target, len(blob), width, height))
+def main() -> int:
+    try:
+        blob = read_source()
+        width, height = validate(blob)
+        target = publish(blob)
+    except PublishError as exc:
+        print(f"main.py: {exc}", file=sys.stderr)
+        return 1
+    print(f"entry.png -> {target} ({len(blob)} bytes, {width}x{height})")
     return 0
 
 
