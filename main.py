@@ -83,6 +83,8 @@ def publish(blob, width, height):
         copied = handle.read()
     if copied != blob:
         fail("the copied entry.png does not match the vendored page")
+    if hashlib.sha256(copied).hexdigest() != EXPECTED_SHA256:
+        fail("the copied page %s does not match the expected sha256" % target)
     copied_width, copied_height = parse_png_size(copied)
     if (copied_width, copied_height) != (width, height):
         fail("the copied entry.png has different dimensions (%dx%d)"
