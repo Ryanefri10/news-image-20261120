@@ -82,7 +82,7 @@ Perubahan pada `main.py`: fungsi `publish()` kini juga memeriksa sha256 salinan 
 - Run 2: `MAKEFUN_OUTPUT_DIR=/tmp/run2 python3 main.py` — sha256 sama persis
 - Run `python3 -O`: `MAKEFUN_OUTPUT_DIR=/tmp/runO python3 -O main.py` — sha256 sama persis
 
-Kedua run, run `-O`, dan `entry.png` yang disertakan menghasilkan hash yang sama, jadi keluarannya identik secara byte.
+Kedua run, run `-O`, dan `entry.png` yang disertakan semuanya menghasilkan hash yang sama, jadi keluarannya identik secara byte.
 
 ## Status
 
